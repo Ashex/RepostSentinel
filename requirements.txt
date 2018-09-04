@@ -1,0 +1,5 @@
+praw >= 4.3
+Pillow
+psycopg2
+requests
+pyyaml
