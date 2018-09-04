@@ -122,70 +122,28 @@ def setup_logging(debug=False):
 def ingestNew(r, settings):
     logger.info('Scanning new for /r/{0}'.format(settings[0]))
 
-    try:
+    for submission in r.subreddit(settings[0]).new(limit=200):
+        logger.debug('Processing submission {}'.format(submission.fullname))
+        indexSubmission(r, submission, settings, True)
 
-        for submission in r.subreddit(settings[0]).new():
-
-            try:
-
-                indexSubmission(r, submission, settings, True)
-
-            except (Exception) as e:
-
-                logger.error('Error ingesting new {0} - {1} - {2}'.format(settings[0], submission.id, e))
-
-    except (Exception) as e:
-
-        logger.error('Error ingesting new {0} - {1}'.format(settings[0], e))
-                
-
-    return
 
 
 
 # Import all submissions from all time within a sub
 def ingestFull(r, settings):
 
-    epochToday = time.time()
-
-    sub = r.subreddit(settings[0])
-
-    try:
-        
-        for week in range(0, 1000):
-
-            try:
-
-                logger.info('Ingesting /r/{0} | Week {1}'.format(settings[0], str(week)))
-
-                epochFrom = epochToday - (604800 + (604800 * week))
-                epochTo = epochToday - (604800 * week)
-
-                searchString = 'timestamp:{0}..{1}'.format(str(int(epochFrom)), str(int(epochTo)))
-
-                submissions = sub.search(searchString, syntax='cloudsearch', limit=None)
-
-                for submission in submissions:
-
-                    subm = r.submission(id=submission.id)
-
-                    indexSubmission(r, subm, settings, False)
-
-            except (Exception) as e:
-
-                logger.error('Error with full ingest of {0} / week {1} - {2}'.format(settings[0], week, e))
+    for topall in r.subreddit(settings[0]).top(time_filter='all'):
+        indexSubmission(r, topall, settings, False)
+    for topyear in r.subreddit(settings[0]).top(time_filter='year'):
+        indexSubmission(r, topyear, settings, False)
+    for topmonth in r.subreddit(settings[0]).top(time_filter='month'):
+        indexSubmission(r, topmonth, settings, False)
 
         # Update DB
         global conn
         cur = conn.cursor()
         cur.execute('UPDATE SubredditSettings SET imported=TRUE WHERE subname=\'{0}\''.format(settings[0]))
 
-    except (Exception) as e:
-
-        logger.error('Error with full ingest of {0} - {1}'.format(settings[0], e))
-    
-
-    return
 
 
 
@@ -280,6 +238,11 @@ def indexSubmission(r, submission, settings, enforce):
         submissionDeleted = False
         if submission.author == '[deleted]':
             submissionDeleted = True
+
+        try:
+            removedStatus = submission.removed
+        except Exception as e:
+            removedStatus = False
             
         submissionValues = (
             str(submission.id),
@@ -291,7 +254,7 @@ def indexSubmission(r, submission, settings, enforce):
             int(submission.num_comments),
             int(submission.score),
             submissionDeleted,
-            submission.removed,
+            removedStatus,
             str(submission.removal_reason),
             False,
             submissionProcessed
