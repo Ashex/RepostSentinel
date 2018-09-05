@@ -1,9 +1,12 @@
 import os, praw, psycopg2, time
 from sys import stdout
+import sys
 from PIL import Image
 import logging
 import yaml
 import requests
+import prawcore
+import urllib3.exceptions
 
 
 conn = None
@@ -357,7 +360,10 @@ def enforceSubmission(r, submission, settings, mediaData):
 
                 submission.report('Possible repost: {0} similar - {1} active'.format(matchCount, matchCountActive))
                 replyInfo = submission.reply(matchInfoTemplate.format(submission.author, mediaData[5], mediaData[6], mediaData[7], mediaData[8], matchRows))
-                praw.models.reddit.comment.CommentModeration(replyInfo).remove(spam=False)
+                try:
+                    praw.models.reddit.comment.CommentModeration(replyInfo).remove(spam=False)
+                except prawcore.exceptions.Forbidden:
+                    logger.warn('Bot missing perms to enforce submission: {}'.format(replyInfo.fullname))
 
             if blacklisted:
 
@@ -371,9 +377,50 @@ def enforceSubmission(r, submission, settings, mediaData):
                 replyRemove = submission.reply(settings[9])
                 replyRemove.distinguish(how='yes', sticky=True)
 
-    except (Exception) as e:
 
-        logger.error('Failed to enforce {0} - {1}'.format(submission.id, e))
+    except (prawcore.exceptions.ResponseException,
+
+            prawcore.exceptions.RequestException,
+
+            prawcore.exceptions.ServerError,
+
+            urllib3.exceptions.TimeoutError,
+
+            requests.exceptions.Timeout):
+
+        logger.warn('HTTP Requests Error. Likely on reddits end due to site issues.')
+
+        time.sleep(300)
+
+    except prawcore.exceptions.InvalidToken:
+
+        logger.warn('API Token Error. Likely on reddits end. Issue self-resolves.')
+
+        time.sleep(180)
+
+    except prawcore.exceptions.BadJSON:
+
+        logger.warn('PRAW didn\'t get good JSON, probably reddit sending bad data due to site issues.')
+
+        time.sleep(180)
+
+    except praw.exceptions.APIException:
+
+        logger.error('PRAW/Reddit API Error')
+
+        time.sleep(30)
+
+    except praw.exceptions.ClientException:
+
+        logger.error('PRAW Client Error')
+
+        time.sleep(30)
+
+    except KeyboardInterrupt as e:
+
+        logger.warn('Caught KeyboardInterrupt - Exiting')
+
+        sys.exit()
 
         
     return
