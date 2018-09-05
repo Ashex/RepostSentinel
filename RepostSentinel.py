@@ -187,8 +187,8 @@ def indexSubmission(r, submission, settings, enforce):
 
                 # Download it
                 headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_5_8) AppleWebKit/534.50.2 (KHTML, like Gecko) Version/5.0.6 Safari/533.22.3'}
-                r = requests.get(media, headers=headers)
-                mediaContent = r.content
+                response = requests.get(media, headers=headers)
+                mediaContent = response.content
 
                 # Save it
                 f = open(temp_file, 'wb')
@@ -226,7 +226,7 @@ def indexSubmission(r, submission, settings, enforce):
                             mediaData)
                         submissionProcessed = True
 
-                except DecompressionBombError:
+                except Image.DecompressionBombError:
                     logger.warning('File aborting due to size {0} - {1}'.format(submission.fullname, e))
                     submissionValues = (
                         str(submission.id),
