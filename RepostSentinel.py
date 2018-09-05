@@ -56,7 +56,7 @@ def Main():
     except Exception as e:
         logger.error('Error connecting to DB: \n{}'.format(e))
         return
-    
+
 
     # Connect to reddit
 
@@ -74,11 +74,11 @@ def Main():
     while True:
 
         try:
-            
+
             loadSubredditSettings()
 
             if subredditSettings:
-            
+
                 for settings in subredditSettings:
 
                     if settings[1] == False:
@@ -87,7 +87,7 @@ def Main():
                         loadSubredditSettings()
 
                     if settings[1]:
-                        
+
                         ingestNew(r, settings)
 
                 checkMail(r)
@@ -99,7 +99,7 @@ def Main():
         except (Exception) as e:
 
             logger.error('Error on main loop - {0}'.format(e))
-            
+
 
 
 #Setup console logger
@@ -151,38 +151,38 @@ def ingestFull(r, settings):
 
 
 def indexSubmission(r, submission, settings, enforce):
-
     try:
-
         # Skip self posts
         if submission.is_self:
             return
 
-
         global conn
         cur = conn.cursor()
-        
 
         # Check for an existing entry so we don't make a duplicate
-        cur.execute('SELECT * FROM Submissions WHERE id=\'{0}\''.format(submission.id))
-        results = cur.fetchall()
+        cur.execute("SELECT id FROM Submissions WHERE id='{0}'".format(submission.id))
+        results = cur.fetchone()
 
         if results:
             return
 
+        logger.info('Indexing submission: {}'.format(submission.fullname))
 
         # Download and process the media
         submissionProcessed = False
 
-        media = str(submission.url.replace("m.imgur.com","i.imgur.com")).lower()
+        media = str(submission.url.replace("m.imgur.com", "i.imgur.com")).lower()
+        temp_file = '/tmp/temp_media_file'
 
         # Check url
-        if (media.endswith(".jpg") or media.endswith(".jpg?1") or media.endswith(".png") or media.endswith("png?1") or media.endswith(".jpeg")) or "reddituploads.com" in media or "reutersmedia.net" in media or "500px.org" in media or "redditmedia.com" in media:
+        if (media.endswith(".jpg") or media.endswith(".jpg?1") or media.endswith(".png") or media.endswith(
+                "png?1") or media.endswith(
+                ".jpeg")) or "reddituploads.com" in media or "reutersmedia.net" in media or "500px.org" in media or "redditmedia.com" in media:
 
             try:
 
-                if os.path.isfile('temp_media_file'):
-                    os.remove('temp_media_file')
+                if os.path.isfile(temp_file):
+                    os.remove(temp_file)
 
 
                 # Download it
@@ -191,18 +191,17 @@ def indexSubmission(r, submission, settings, enforce):
                 mediaContent = r.content
 
                 # Save it
-                f = open('temp_media_file', 'wb')
+                f = open(temp_file, 'wb')
                 f.write(mediaContent)
                 f.close()
 
                 try:
-
-                    img = Image.open('temp_media_file')
+                    img = Image.open(temp_file)
 
                     width, height = img.size
-                    pixels = width*height
-                    size = os.path.getsize('temp_media_file')
-                    
+                    pixels = width * height
+                    size = os.path.getsize(temp_file)
+
                     imgHash = DifferenceHash(img)
 
                     mediaData = (
@@ -217,25 +216,39 @@ def indexSubmission(r, submission, settings, enforce):
                         size
                     )
 
-                    if enforce:
+                    if width > 200 and height > 200:
+                        if enforce:
+                            enforceSubmission(r, submission, settings, mediaData)
 
-                        enforceSubmission(r, submission, settings, mediaData)
-                        
+                        # Add to DB
+                        cur.execute(
+                            'INSERT INTO Media(hash, submission_id, subreddit, frame_number, frame_count, frame_width, frame_height, total_pixels, file_size) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)',
+                            mediaData)
+                        submissionProcessed = True
 
-                    # Add to DB
-                    cur.execute('INSERT INTO Media(hash, submission_id, subreddit, frame_number, frame_count, frame_width, frame_height, total_pixels, file_size) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)', mediaData)
-                    
-                    submissionProcessed = True
-                    
-
+                except DecompressionBombError:
+                    logger.warning('File aborting due to size {0} - {1}'.format(submission.fullname, e))
+                    submissionValues = (
+                        str(submission.id),
+                        settings[0],
+                        float(submission.created),
+                        str(submission.title),
+                        str(submission.url),
+                        int(submission.num_comments),
+                        int(submission.score)
+                    )
+                    cur.execute(
+                        'INSERT INTO Submissions(id, subreddit, timestamp, title, url, comments, score) VALUES(%s, %s, %s, %s, %s, %s, %s)',
+                        submissionValues)
+                    return
                 except (Exception) as e:
-
-                    logger.error('Error processing {0} - {1}'.format(submission.id, e))
-                
+                    logger.error('Error processing {0} - {1}'.format(submission.fullname, e))
             except (Exception) as e:
-
-                logger.error('Failed to download {0} - {1}'.format(submission.id, e))
-
+                logger.warning('Failed to download {0} - {1}'.format(submission.fullname, e))
+        try:
+            os.remove(temp_file)
+        except:
+            pass
 
         # Add submission to DB
         submissionDeleted = False
@@ -246,7 +259,7 @@ def indexSubmission(r, submission, settings, enforce):
             removedStatus = submission.removed
         except Exception as e:
             removedStatus = False
-            
+
         submissionValues = (
             str(submission.id),
             settings[0],
@@ -264,16 +277,13 @@ def indexSubmission(r, submission, settings, enforce):
         )
 
         try:
-            cur.execute('INSERT INTO Submissions(id, subreddit, timestamp, author, title, url, comments, score, deleted, removed, removal_reason, blacklist, processed) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)', submissionValues)
+            cur.execute(
+                'INSERT INTO Submissions(id, subreddit, timestamp, author, title, url, comments, score, deleted, removed, removal_reason, blacklist, processed) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+                submissionValues)
         except:
             logger.error('Error adding {0}'.format(submission.id))
-
     except (Exception) as e:
-
         logger.error('Failed to ingest {0} - {1}'.format(submission.id, e))
-    
-
-    return
 
 
 
@@ -286,7 +296,7 @@ def enforceSubmission(r, submission, settings, mediaData):
 
         global conn
         cur = conn.cursor()
-        
+
         # Check if it's the generic 'deleted image' from imgur
         if mediaData[0] == '9925021303884596990':
 
@@ -296,7 +306,7 @@ def enforceSubmission(r, submission, settings, mediaData):
 
         # Handle single images
         if mediaData[4] == 1:
-            
+
             cur.execute('SELECT * FROM Media WHERE frame_count=1 AND subreddit=\'{0}\''.format(settings[0]))
             mediaHashes = cur.fetchall()
 
@@ -324,7 +334,7 @@ def enforceSubmission(r, submission, settings, mediaData):
                     parentBlacklist = mediaParent[11]
 
                     originalSubmission = r.submission(id=mediaParent[0])
-                    
+
                     currentScore = int(originalSubmission.score)
                     currentComments = int(originalSubmission.num_comments)
                     currentStatus = 'Active'
@@ -332,16 +342,16 @@ def enforceSubmission(r, submission, settings, mediaData):
                         currentStatus = 'Removed'
                     elif originalSubmission.author == '[deleted]':
                         currentStatus = 'Deleted'
-                    
+
                     matchRows = matchRows + matchRowTemplate.format(mediaParent[3], convertDateFormat(mediaParent[2]), str(mediaSimilarity), str(mediaData[5]), str(mediaData[6]), mediaParent[5], mediaParent[4], mediaParent[0], currentScore, currentComments, currentStatus)
 
                     matchCount = matchCount + 1
-                    
+
                     if currentStatus == 'Active':
                         matchCountActive = matchCountActive + 1
 
                     reportSubmission = True
-                    
+
                 # Remove threshold
                 if mediaSimilarity > settings[8]:
 
@@ -422,7 +432,7 @@ def enforceSubmission(r, submission, settings, mediaData):
 
         sys.exit()
 
-        
+
     return
 
 
@@ -432,11 +442,11 @@ def loadSubredditSettings():
 
     global conn
     global subredditSettings
-    
+
     cur = conn.cursor()
     cur.execute('SELECT * FROM SubredditSettings')
     subredditSettings = cur.fetchall()
-    
+
 
     return
 
@@ -479,11 +489,11 @@ def checkMail(r):
                                     cur = conn.cursor()
                                     cur.execute('UPDATE Submissions SET blacklist=TRUE WHERE id=\'{0}\''.format(submissionId))
 
-                                
+
     except (Exception) as e:
 
         logger.error('Failed to check messages - {0}'.format(e))
-        
+
 
     return
 
@@ -497,7 +507,7 @@ def DifferenceHash(theImage):
     theImage = theImage.resize((8,8), Image.ANTIALIAS)
     previousPixel = theImage.getpixel((0, 7))
     differenceHash = 0
-    
+
     for row in range(0, 8, 2):
 
         for col in range(8):
