@@ -318,6 +318,7 @@ def enforceSubmission(r, submission, settings, mediaData):
             reportSubmission = False
             removeSubmission = False
             blacklisted = False
+            sameAuthor = False
 
             # Find matches
             for mediaHash in mediaHashes:
@@ -334,6 +335,8 @@ def enforceSubmission(r, submission, settings, mediaData):
                     parentBlacklist = mediaParent[11]
 
                     originalSubmission = r.submission(id=mediaParent[0])
+
+
 
                     currentScore = int(originalSubmission.score)
                     currentComments = int(originalSubmission.num_comments)
@@ -352,6 +355,9 @@ def enforceSubmission(r, submission, settings, mediaData):
 
                     reportSubmission = True
 
+                    if mediaParent[3] == submission.author:
+                        sameAuthor = True
+
                 # Remove threshold
                 if mediaSimilarity > settings[8]:
 
@@ -360,13 +366,14 @@ def enforceSubmission(r, submission, settings, mediaData):
                     # TODO: Add comment count and karma as thresholds
 
 
+
                 # Blacklist
                 if mediaSimilarity == 100 and parentBlacklist:
 
                     blacklisted = True
 
-
-            if reportSubmission:
+            # Only report if the submission author is different
+            if reportSubmission and sameAuthor is False:
 
                 submission.report('Possible repost: {0} similar - {1} active'.format(matchCount, matchCountActive))
                 replyInfo = submission.reply(matchInfoTemplate.format(submission.author, mediaData[5], mediaData[6], mediaData[7], mediaData[8], matchRows))
