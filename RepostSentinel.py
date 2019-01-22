@@ -1,56 +1,67 @@
-import io, os, praw, psycopg2, time, urllib.request
+import os, praw, psycopg2, time
+from sys import stdout
 from PIL import Image
-from PIL import ImageStat
-
+import logging
+import yaml
+import requests
 
 
 conn = None
 subredditSettings = None
-logFile = 'repostLog.log'
-
-dbName = 'CHANGEME'
-dbUser = 'CHANGEME'
-dbHost = 'CHANGEME'
-dbPasswrd = 'CHANGEME'
-
-clientID = 'CHANGEME'
-clientSecret = 'CHANGEME'
-passwrd = 'CHANGEME'
-userAgent = 'CHANGEME'
-usernm = 'CHANGEME'
-
 
 
 
 def Main():
 
-    # DB Connection
+    # Logging
+    global logger
+    logger = setup_logging()
+
+
+    # Declare global variables
     global conn
     global dbName
     global dbUser
     global dbHost
     global dbPasswrd
-    
-    try:
-        conn = psycopg2.connect("dbname='{0}' user='{1}' host='{2}' password='{3}'".format(dbName, dbUser, dbHost, dbPasswrd))
-        conn.autocommit = True
-    except:
-        log('Error connecting to DB')
-        return
-    
 
-    # Connect to reddit
     global clientID
     global clientSecret
     global passwrd
     global userAgent
     global usernm
 
+    #Get values for everything
+    config = yaml.safe_load(open('config.yml'))
+
+    dbName = config['DB_NAME']
+    dbUser = config['DB_USER']
+    dbHost = config['DB_HOST']
+    dbPasswrd = config['DB_PASS']
+
+    clientID = config['CLIENT_ID']
+    clientSecret = config['CLIENT_SECRET']
+    usernm = config['USER_NAME']
+    passwrd = config['USER_PASS']
+    userAgent = config['USER_AGENT']
+
+    # DB Connection
+
+    try:
+        conn = psycopg2.connect("dbname='{0}' user='{1}' host='{2}' password='{3}'".format(dbName, dbUser, dbHost, dbPasswrd))
+        conn.autocommit = True
+    except Exception as e:
+        logger.error('Error connecting to DB: \n{}'.format(e))
+        return
+    
+
+    # Connect to reddit
+
     r = None
     try:
         r = praw.Reddit(client_id=clientID, client_secret=clientSecret, password=passwrd, user_agent=userAgent, username=usernm)
-    except:
-        log('Error connecting to reddit')
+    except Exception as e:
+        logger.error('Error connecting to reddit: \n{}'.format(e))
 
 
 
@@ -83,18 +94,33 @@ def Main():
                 return
 
         except (Exception) as e:
-            
-            log('Error on main loop - {0}'.format(e))
+
+            logger.error('Error on main loop - {0}'.format(e))
             
 
-    return
 
+#Setup console logger
+def setup_logging(debug=False):
+    logger = logging.getLogger("RepostSentinal")
+    formatter = logging.Formatter('[%(asctime)s %(levelname)s] %(message)s')
+    # Prevent default handler from being used
+    logger.propagate = False
+    console_handler = logging.StreamHandler(stream=stdout)
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.DEBUG)
+    logger.addHandler(console_handler)
+
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
+
+    return logger
 
 
 # Import new submissions
 def ingestNew(r, settings):
-
-    log('Scanning new for /r/{0}'.format(settings[0]))
+    logger.info('Scanning new for /r/{0}'.format(settings[0]))
 
     try:
 
@@ -106,11 +132,11 @@ def ingestNew(r, settings):
 
             except (Exception) as e:
 
-                log('Error ingesting new {0} - {1} - {2}'.format(settings[0], submission.id, e))
+                logger.error('Error ingesting new {0} - {1} - {2}'.format(settings[0], submission.id, e))
 
     except (Exception) as e:
 
-        log('Error ingesting new {0} - {1}'.format(settings[0], e))
+        logger.error('Error ingesting new {0} - {1}'.format(settings[0], e))
                 
 
     return
@@ -130,7 +156,7 @@ def ingestFull(r, settings):
 
             try:
 
-                log('Ingesting /r/{0} | Week {1}'.format(settings[0], str(week)))
+                logger.info('Ingesting /r/{0} | Week {1}'.format(settings[0], str(week)))
 
                 epochFrom = epochToday - (604800 + (604800 * week))
                 epochTo = epochToday - (604800 * week)
@@ -147,7 +173,7 @@ def ingestFull(r, settings):
 
             except (Exception) as e:
 
-                log('Error with full ingest of {0} / week {1} - {2}'.format(settings[0], week, e))
+                logger.error('Error with full ingest of {0} / week {1} - {2}'.format(settings[0], week, e))
 
         # Update DB
         global conn
@@ -156,7 +182,7 @@ def ingestFull(r, settings):
 
     except (Exception) as e:
 
-        log('Error with full ingest of {0} - {1}'.format(settings[0], e))
+        logger.error('Error with full ingest of {0} - {1}'.format(settings[0], e))
     
 
     return
@@ -194,14 +220,14 @@ def indexSubmission(r, submission, settings, enforce):
 
             try:
 
-                try:
+                if os.path.isfile('temp_media_file'):
                     os.remove('temp_media_file')
-                except:
-                    print('fnf')
+
 
                 # Download it
-                req = urllib.request.Request(media, headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_5_8) AppleWebKit/534.50.2 (KHTML, like Gecko) Version/5.0.6 Safari/533.22.3'})
-                mediaContent = urllib.request.urlopen(req).read()
+                headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_5_8) AppleWebKit/534.50.2 (KHTML, like Gecko) Version/5.0.6 Safari/533.22.3'}
+                r = requests.get(media, headers=headers)
+                mediaContent = r.content
 
                 # Save it
                 f = open('temp_media_file', 'wb')
@@ -243,11 +269,11 @@ def indexSubmission(r, submission, settings, enforce):
 
                 except (Exception) as e:
 
-                    log('Error processing {0} - {1}'.format(submission.id, e))
+                    logger.error('Error processing {0} - {1}'.format(submission.id, e))
                 
             except (Exception) as e:
-                
-                log('Failed to download {0} - {1}'.format(submission.id, e))
+
+                logger.error('Failed to download {0} - {1}'.format(submission.id, e))
 
 
         # Add submission to DB
@@ -274,11 +300,11 @@ def indexSubmission(r, submission, settings, enforce):
         try:
             cur.execute('INSERT INTO Submissions(id, subreddit, timestamp, author, title, url, comments, score, deleted, removed, removal_reason, blacklist, processed) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)', submissionValues)
         except:
-            log('Error adding {0}'.format(submission.id))
+            logger.error('Error adding {0}'.format(submission.id))
 
     except (Exception) as e:
-            
-        log('Failed to ingest {0} - {1}'.format(submission.id, e))
+
+        logger.error('Failed to ingest {0} - {1}'.format(submission.id, e))
     
 
     return
@@ -383,8 +409,8 @@ def enforceSubmission(r, submission, settings, mediaData):
                 replyRemove.distinguish(how='yes', sticky=True)
 
     except (Exception) as e:
-            
-        log('Failed to enforce {0} - {1}'.format(submission.id, e))
+
+        logger.error('Failed to enforce {0} - {1}'.format(submission.id, e))
 
         
     return
@@ -445,8 +471,8 @@ def checkMail(r):
 
                                 
     except (Exception) as e:
-            
-        log('Failed to check messages - {0}'.format(e))
+
+        logger.error('Failed to check messages - {0}'.format(e))
         
 
     return
@@ -486,28 +512,6 @@ def DifferenceHash(theImage):
 def convertDateFormat(timestamp):
 
     return str(time.strftime('%B %d, %Y - %H:%M:%S', time.localtime(timestamp)))
-
-
-
-# Log stuff
-def log(logEntry):
-
-    print(str(time.time()) + '  :  ' + logEntry)
-    
-    global logFile
-
-    try:
-
-        f = open(logFile, 'a')
-        f.write(str(time.time()) + '  :  ' + logEntry + '\r\n')
-        f.close()
-
-    except (Exception) as e:
-
-            print(e)
-            
-
-    return
 
 
 

@@ -1,0 +1,11 @@
+# Database Settings
+DB_HOST: '127.0.0.1'
+DB_NAME: 'repost_sentinal'
+DB_USER: 'repost_sentinal'
+DB_PASS: 'repost_sentinal'
+# OAuth API Settings
+CLIENT_ID: 'clientidstring'
+CLIENT_SECRET: 'clientsecretstring'
+USER_NAME: 'redditusername'
+USER_PASS: 'redditpassword'
+USER_AGENT: 'useragent'
