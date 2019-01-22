@@ -1,9 +1,12 @@
 import os, praw, psycopg2, time
 from sys import stdout
+import sys
 from PIL import Image
 import logging
 import yaml
 import requests
+import prawcore
+import urllib3.exceptions
 
 
 conn = None
@@ -53,7 +56,7 @@ def Main():
     except Exception as e:
         logger.error('Error connecting to DB: \n{}'.format(e))
         return
-    
+
 
     # Connect to reddit
 
@@ -71,11 +74,11 @@ def Main():
     while True:
 
         try:
-            
+
             loadSubredditSettings()
 
             if subredditSettings:
-            
+
                 for settings in subredditSettings:
 
                     if settings[1] == False:
@@ -84,7 +87,7 @@ def Main():
                         loadSubredditSettings()
 
                     if settings[1]:
-                        
+
                         ingestNew(r, settings)
 
                 checkMail(r)
@@ -96,7 +99,7 @@ def Main():
         except (Exception) as e:
 
             logger.error('Error on main loop - {0}'.format(e))
-            
+
 
 
 #Setup console logger
@@ -122,126 +125,83 @@ def setup_logging(debug=False):
 def ingestNew(r, settings):
     logger.info('Scanning new for /r/{0}'.format(settings[0]))
 
-    try:
+    for submission in r.subreddit(settings[0]).new(limit=200):
+        logger.debug('Processing submission {}'.format(submission.fullname))
+        indexSubmission(r, submission, settings, True)
 
-        for submission in r.subreddit(settings[0]).new():
-
-            try:
-
-                indexSubmission(r, submission, settings, True)
-
-            except (Exception) as e:
-
-                logger.error('Error ingesting new {0} - {1} - {2}'.format(settings[0], submission.id, e))
-
-    except (Exception) as e:
-
-        logger.error('Error ingesting new {0} - {1}'.format(settings[0], e))
-                
-
-    return
 
 
 
 # Import all submissions from all time within a sub
 def ingestFull(r, settings):
 
-    epochToday = time.time()
-
-    sub = r.subreddit(settings[0])
-
-    try:
-        
-        for week in range(0, 1000):
-
-            try:
-
-                logger.info('Ingesting /r/{0} | Week {1}'.format(settings[0], str(week)))
-
-                epochFrom = epochToday - (604800 + (604800 * week))
-                epochTo = epochToday - (604800 * week)
-
-                searchString = 'timestamp:{0}..{1}'.format(str(int(epochFrom)), str(int(epochTo)))
-
-                submissions = sub.search(searchString, syntax='cloudsearch', limit=None)
-
-                for submission in submissions:
-
-                    subm = r.submission(id=submission.id)
-
-                    indexSubmission(r, subm, settings, False)
-
-            except (Exception) as e:
-
-                logger.error('Error with full ingest of {0} / week {1} - {2}'.format(settings[0], week, e))
+    for topall in r.subreddit(settings[0]).top(time_filter='all'):
+        indexSubmission(r, topall, settings, False)
+    for topyear in r.subreddit(settings[0]).top(time_filter='year'):
+        indexSubmission(r, topyear, settings, False)
+    for topmonth in r.subreddit(settings[0]).top(time_filter='month'):
+        indexSubmission(r, topmonth, settings, False)
 
         # Update DB
         global conn
         cur = conn.cursor()
         cur.execute('UPDATE SubredditSettings SET imported=TRUE WHERE subname=\'{0}\''.format(settings[0]))
 
-    except (Exception) as e:
-
-        logger.error('Error with full ingest of {0} - {1}'.format(settings[0], e))
-    
-
-    return
 
 
 
 def indexSubmission(r, submission, settings, enforce):
-
     try:
-
         # Skip self posts
         if submission.is_self:
             return
 
-
         global conn
         cur = conn.cursor()
-        
 
         # Check for an existing entry so we don't make a duplicate
-        cur.execute('SELECT * FROM Submissions WHERE id=\'{0}\''.format(submission.id))
-        results = cur.fetchall()
+        cur.execute("SELECT id FROM Submissions WHERE id='{0}'".format(submission.id))
+        results = cur.fetchone()
 
         if results:
             return
 
+        logger.info('Indexing submission: {}'.format(submission.fullname))
 
         # Download and process the media
         submissionProcessed = False
 
-        media = str(submission.url.replace("m.imgur.com","i.imgur.com")).lower()
+        media = str(submission.url.replace("m.imgur.com", "i.imgur.com")).lower()
+        temp_file = '/tmp/temp_media_file'
 
         # Check url
-        if (media.endswith(".jpg") or media.endswith(".jpg?1") or media.endswith(".png") or media.endswith("png?1") or media.endswith(".jpeg")) or "reddituploads.com" in media or "reutersmedia.net" in media or "500px.org" in media or "redditmedia.com" in media:
+        if (media.endswith(".jpg") or media.endswith(".jpg?1") or media.endswith(".png") or media.endswith(
+                "png?1") or media.endswith(
+                ".jpeg")) or "reddituploads.com" in media or "reutersmedia.net" in media or "500px.org" in media or "redditmedia.com" in media:
 
             try:
 
-                if os.path.isfile('temp_media_file'):
-                    os.remove('temp_media_file')
+                if os.path.isfile(temp_file):
+                    os.remove(temp_file)
 
 
                 # Download it
                 headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_5_8) AppleWebKit/534.50.2 (KHTML, like Gecko) Version/5.0.6 Safari/533.22.3'}
-                r = requests.get(media, headers=headers)
-                mediaContent = r.content
+                response = requests.get(media, headers=headers)
+                mediaContent = response.content
 
                 # Save it
-                f = open('temp_media_file', 'wb')
+                f = open(temp_file, 'wb')
                 f.write(mediaContent)
                 f.close()
 
                 try:
-
-                    img = Image.open('temp_media_file')
+                    img = Image.open(temp_file)
 
                     width, height = img.size
-                    pixels = width*height
-                    size = os.path.getsize('temp_media_file')
-                    
+                    pixels = width * height
+                    size = os.path.getsize(temp_file)
+
                     imgHash = DifferenceHash(img)
 
                     mediaData = (
@@ -256,31 +216,50 @@ def indexSubmission(r, submission, settings, enforce):
                         size
                     )
 
-                    if enforce:
+                    if width > 200 and height > 200:
+                        if enforce:
+                            enforceSubmission(r, submission, settings, mediaData)
 
-                        enforceSubmission(r, submission, settings, mediaData)
-                        
+                        # Add to DB
+                        cur.execute(
+                            'INSERT INTO Media(hash, submission_id, subreddit, frame_number, frame_count, frame_width, frame_height, total_pixels, file_size) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)',
+                            mediaData)
+                        submissionProcessed = True
 
-                    # Add to DB
-                    cur.execute('INSERT INTO Media(hash, submission_id, subreddit, frame_number, frame_count, frame_width, frame_height, total_pixels, file_size) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)', mediaData)
-                    
-                    submissionProcessed = True
-                    
-
+                except Image.DecompressionBombError:
+                    logger.warning('File aborting due to size {0} - {1}'.format(submission.fullname, e))
+                    submissionValues = (
+                        str(submission.id),
+                        settings[0],
+                        float(submission.created),
+                        str(submission.title),
+                        str(submission.url),
+                        int(submission.num_comments),
+                        int(submission.score)
+                    )
+                    cur.execute(
+                        'INSERT INTO Submissions(id, subreddit, timestamp, title, url, comments, score) VALUES(%s, %s, %s, %s, %s, %s, %s)',
+                        submissionValues)
+                    return
                 except (Exception) as e:
-
-                    logger.error('Error processing {0} - {1}'.format(submission.id, e))
-                
+                    logger.error('Error processing {0} - {1}'.format(submission.fullname, e))
             except (Exception) as e:
-
-                logger.error('Failed to download {0} - {1}'.format(submission.id, e))
-
+                logger.warning('Failed to download {0} - {1}'.format(submission.fullname, e))
+        try:
+            os.remove(temp_file)
+        except:
+            pass
 
         # Add submission to DB
         submissionDeleted = False
         if submission.author == '[deleted]':
             submissionDeleted = True
-            
+
+        try:
+            removedStatus = submission.removed
+        except Exception as e:
+            removedStatus = False
+
         submissionValues = (
             str(submission.id),
             settings[0],
@@ -291,23 +270,20 @@ def indexSubmission(r, submission, settings, enforce):
             int(submission.num_comments),
             int(submission.score),
             submissionDeleted,
-            submission.removed,
+            removedStatus,
             str(submission.removal_reason),
             False,
             submissionProcessed
         )
 
         try:
-            cur.execute('INSERT INTO Submissions(id, subreddit, timestamp, author, title, url, comments, score, deleted, removed, removal_reason, blacklist, processed) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)', submissionValues)
+            cur.execute(
+                'INSERT INTO Submissions(id, subreddit, timestamp, author, title, url, comments, score, deleted, removed, removal_reason, blacklist, processed) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+                submissionValues)
         except:
             logger.error('Error adding {0}'.format(submission.id))
-
     except (Exception) as e:
-
         logger.error('Failed to ingest {0} - {1}'.format(submission.id, e))
-    
-
-    return
 
 
 
@@ -320,7 +296,7 @@ def enforceSubmission(r, submission, settings, mediaData):
 
         global conn
         cur = conn.cursor()
-        
+
         # Check if it's the generic 'deleted image' from imgur
         if mediaData[0] == '9925021303884596990':
 
@@ -330,7 +306,7 @@ def enforceSubmission(r, submission, settings, mediaData):
 
         # Handle single images
         if mediaData[4] == 1:
-            
+
             cur.execute('SELECT * FROM Media WHERE frame_count=1 AND subreddit=\'{0}\''.format(settings[0]))
             mediaHashes = cur.fetchall()
 
@@ -342,6 +318,7 @@ def enforceSubmission(r, submission, settings, mediaData):
             reportSubmission = False
             removeSubmission = False
             blacklisted = False
+            sameAuthor = False
 
             # Find matches
             for mediaHash in mediaHashes:
@@ -358,7 +335,9 @@ def enforceSubmission(r, submission, settings, mediaData):
                     parentBlacklist = mediaParent[11]
 
                     originalSubmission = r.submission(id=mediaParent[0])
-                    
+
+
+
                     currentScore = int(originalSubmission.score)
                     currentComments = int(originalSubmission.num_comments)
                     currentStatus = 'Active'
@@ -366,16 +345,19 @@ def enforceSubmission(r, submission, settings, mediaData):
                         currentStatus = 'Removed'
                     elif originalSubmission.author == '[deleted]':
                         currentStatus = 'Deleted'
-                    
+
                     matchRows = matchRows + matchRowTemplate.format(mediaParent[3], convertDateFormat(mediaParent[2]), str(mediaSimilarity), str(mediaData[5]), str(mediaData[6]), mediaParent[5], mediaParent[4], mediaParent[0], currentScore, currentComments, currentStatus)
 
                     matchCount = matchCount + 1
-                    
+
                     if currentStatus == 'Active':
                         matchCountActive = matchCountActive + 1
 
                     reportSubmission = True
-                    
+
+                    if mediaParent[3] == submission.author:
+                        sameAuthor = True
+
                 # Remove threshold
                 if mediaSimilarity > settings[8]:
 
@@ -384,17 +366,21 @@ def enforceSubmission(r, submission, settings, mediaData):
                     # TODO: Add comment count and karma as thresholds
 
 
+
                 # Blacklist
                 if mediaSimilarity == 100 and parentBlacklist:
 
                     blacklisted = True
 
-
-            if reportSubmission:
+            # Only report if the submission author is different
+            if reportSubmission and sameAuthor is False:
 
                 submission.report('Possible repost: {0} similar - {1} active'.format(matchCount, matchCountActive))
                 replyInfo = submission.reply(matchInfoTemplate.format(submission.author, mediaData[5], mediaData[6], mediaData[7], mediaData[8], matchRows))
-                praw.models.reddit.comment.CommentModeration(replyInfo).remove(spam=False)
+                try:
+                    praw.models.reddit.comment.CommentModeration(replyInfo).remove(spam=False)
+                except prawcore.exceptions.Forbidden:
+                    logger.warn('Bot missing perms to enforce submission: {}'.format(replyInfo.fullname))
 
             if blacklisted:
 
@@ -408,11 +394,52 @@ def enforceSubmission(r, submission, settings, mediaData):
                 replyRemove = submission.reply(settings[9])
                 replyRemove.distinguish(how='yes', sticky=True)
 
-    except (Exception) as e:
 
-        logger.error('Failed to enforce {0} - {1}'.format(submission.id, e))
+    except (prawcore.exceptions.ResponseException,
 
-        
+            prawcore.exceptions.RequestException,
+
+            prawcore.exceptions.ServerError,
+
+            urllib3.exceptions.TimeoutError,
+
+            requests.exceptions.Timeout):
+
+        logger.warn('HTTP Requests Error. Likely on reddits end due to site issues.')
+
+        time.sleep(300)
+
+    except prawcore.exceptions.InvalidToken:
+
+        logger.warn('API Token Error. Likely on reddits end. Issue self-resolves.')
+
+        time.sleep(180)
+
+    except prawcore.exceptions.BadJSON:
+
+        logger.warn('PRAW didn\'t get good JSON, probably reddit sending bad data due to site issues.')
+
+        time.sleep(180)
+
+    except praw.exceptions.APIException:
+
+        logger.error('PRAW/Reddit API Error')
+
+        time.sleep(30)
+
+    except praw.exceptions.ClientException:
+
+        logger.error('PRAW Client Error')
+
+        time.sleep(30)
+
+    except KeyboardInterrupt as e:
+
+        logger.warn('Caught KeyboardInterrupt - Exiting')
+
+        sys.exit()
+
+
     return
 
 
@@ -422,11 +449,11 @@ def loadSubredditSettings():
 
     global conn
     global subredditSettings
-    
+
     cur = conn.cursor()
     cur.execute('SELECT * FROM SubredditSettings')
     subredditSettings = cur.fetchall()
-    
+
 
     return
 
@@ -469,11 +496,11 @@ def checkMail(r):
                                     cur = conn.cursor()
                                     cur.execute('UPDATE Submissions SET blacklist=TRUE WHERE id=\'{0}\''.format(submissionId))
 
-                                
+
     except (Exception) as e:
 
         logger.error('Failed to check messages - {0}'.format(e))
-        
+
 
     return
 
@@ -487,7 +514,7 @@ def DifferenceHash(theImage):
     theImage = theImage.resize((8,8), Image.ANTIALIAS)
     previousPixel = theImage.getpixel((0, 7))
     differenceHash = 0
-    
+
     for row in range(0, 8, 2):
 
         for col in range(8):

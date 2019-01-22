@@ -31,7 +31,7 @@ INSERT INTO SubredditSettings(
     remove_indirect, 
     remove_indirect_message
 ) VALUES(
-    'photoshopbattles', 
+    'happy',
     False, 
     450, 
     450, 
