@@ -9,14 +9,14 @@ import prawcore
 import urllib3.exceptions
 
 
-class ReportSentinel:
+class RepostSentinel:
     def __init__(self, **kwargs):
         self.db_connection = None
         self.subredditSettings = None
         self.logger = None
         self.debug = False
         self.config = yaml.safe_load(open('config.yml'))
-        super(ReportSentinel, self).__init__(**kwargs)
+        super(RepostSentinel, self).__init__(**kwargs)
 
     def start(self):
         self.setup_logging()
@@ -582,4 +582,4 @@ class ReportSentinel:
 
 
 if __name__ == '__main__':
-    ReportSentinel.start()
+    RepostSentinel.start()
