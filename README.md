@@ -5,7 +5,7 @@ Detects and moderates reposts on reddit
 
 ## Dependencies
 
-The bot requires python 3.5+, library dependencies are in `requirements.txt`
+The bot requires python 3.7+, library dependencies are in `requirements.txt`
 
 ## Getting Started
 

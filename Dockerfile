@@ -2,7 +2,7 @@
 # Usage:
 #   docker build -t repostsentinal .
 #   docker run -d -P --name repostsentinal --link repostsentinaldb:postgres repostsentinal -dbhost postgres -dbname repost_sentinel -dbuser repost_sentinel -dbpass repost_sentinel -clientid clientid -clientsecret clientsecret -user-name username -user-password password -user-agent "RepostSentinal for /u/username"
-FROM python:3.5-alpine
+FROM python:3.7-alpine
 
 MAINTAINER Ahmed Osman (/u/Ashex)
 
