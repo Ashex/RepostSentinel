@@ -30,9 +30,13 @@ class RepostSentinel:
         # DB Connection
 
         try:
-            self.db_connection = psycopg2.connect(f"dbname='{self.config['DB_NAME']}' user='{self.config['DB_USER']}' "
-                                                  f"host='{self.config['DB_HOST']}' password='{self.config['DB_PASS']}'"
-                                                  )
+            self.db_connection = psycopg2.connect(
+                "dbname='{0}' user='{1}' host='{2}' password='{3}'".format(
+                    self.config['DB_NAME'],
+                    self.config['DB_USER'],
+                    self.config['DB_HOST'],
+                    self.config['DB_PASS'])
+            )
             self.db_connection.autocommit = True
         except Exception as e:
             self.logger.critical('Error connecting to DB: \n{}'.format(e))
@@ -49,7 +53,7 @@ class RepostSentinel:
 
         # ----------- MAIN LOOP ----------- #
         while True:
-            self.logger.info("Starting Main Loop")
+            self.logger.debug("Starting Main Loop")
             try:
                 self.loadSubredditSettings()
                 if self.subredditSettings:
@@ -582,4 +586,4 @@ class RepostSentinel:
 
 
 if __name__ == '__main__':
-    RepostSentinel.start()
+    RepostSentinel().start()
